@@ -20,35 +20,37 @@ jobs:
 
       - name: Show tree (debug)
         run: |
+          echo "== Git submodules =="
           git submodule status || true
+          echo "== Root directory =="
           ls -la
+          echo "== SRC directory =="
+          ls -la src || true
 
       - name: Build with our Docker image
         run: |
-          docker run --rm -v "${{ github.workspace }}:/src" ghcr.io/koman10/guardian-beacon:latest bash -lc '
-            set -euxo pipefail
-            cd /src
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            ghcr.io/koman10/guardian-beacon:latest \
+            /bin/sh -c "
+              set -eux
+              cd /src
 
-            # [WAŻNE] Jeżeli repo to fork InfiniTime – nic nie zmieniaj.
-            # Obraz zawiera toolchain + SDK + skrypty.
+              echo '== Building firmware inside container =='
 
-            # Czy mamy skrypt budujący z repo InfiniTime?
-            if [ -x scripts/build.sh ]; then
-              # Standardowy sposób na InfiniTime:
-              # -t pinetime -> target PineTime
-              # -r         -> Release
-              ./scripts/build.sh -t pinetime -r
-              # Po zakończeniu artefakty zwykle są w ./build
-            else
-              # Fallback: „klasyczny” CMake/Ninja
-              cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTARGET_DEVICE=PINETIME
-              cmake --build build -j"$(nproc)"
-            fi
+              # Jeśli repo to fork InfiniTime – użyj ich skryptu
+              if [ -x scripts/build.sh ]; then
+                /bin/sh scripts/build.sh -t pinetime -r
+              else
+                # Fallback: klasyczny CMake/Ninja
+                cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTARGET_DEVICE=PINETIME
+                cmake --build build -j\$(nproc)
+              fi
 
-            echo "== Zawartość build =="
-            ls -lh build || true
-            ls -lh build/*.bin build/*.hex build/*.zip 2>/dev/null || true
-          '
+              echo '== Build output =='
+              ls -lh build || true
+              ls -lh build/*.bin build/*.hex build/*.zip 2>/dev/null || true
+            "
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
