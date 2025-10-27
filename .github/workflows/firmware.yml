@@ -9,7 +9,7 @@ on:
       - "README.md"
 
 jobs:
-  build:
+  build-firmware:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,47 +18,48 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install toolchain & deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build cmake python3 git \
+            gcc-arm-none-eabi binutils-arm-none-eabi
+
       - name: Show tree (debug)
         run: |
-          echo "== Git submodules =="
           git submodule status || true
-          echo "== Root directory =="
           ls -la
-          echo "== SRC directory =="
-          ls -la src || true
+          ls -la scripts || true
+          cmake --version
+          arm-none-eabi-gcc --version
+          ninja --version
 
-      - name: Build with our Docker image
+      - name: Build (prefer InfiniTime script)
+        shell: bash
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            ghcr.io/koman10/guardian-beacon:latest \
-            /bin/sh -c "
-              set -eux
-              cd /src
+          set -eux
+          if [ -f scripts/build.sh ]; then
+            chmod +x scripts/build.sh || true
+            ./scripts/build.sh -t pinetime -r
+          else
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build -j"$(nproc)"
+          fi
 
-              echo '== Building firmware inside container =='
-
-              # Jeśli repo to fork InfiniTime – użyj ich skryptu
-              if [ -x scripts/build.sh ]; then
-                /bin/sh scripts/build.sh -t pinetime -r
-              else
-                # Fallback: klasyczny CMake/Ninja
-                cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTARGET_DEVICE=PINETIME
-                cmake --build build -j\$(nproc)
-              fi
-
-              echo '== Build output =='
-              ls -lh build || true
-              ls -lh build/*.bin build/*.hex build/*.zip 2>/dev/null || true
-            "
+      - name: List build outputs
+        run: |
+          echo "== build dir =="
+          ls -lh build || true
+          echo "== bin/hex/zip =="
+          ls -lh build/**/*.bin build/**/*.hex build/**/*.zip 2>/dev/null || true
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
           name: guardian-firmware
           path: |
-            build/*.bin
-            build/*.hex
-            build/*.zip
-            build/*.out
+            build/**/*.bin
+            build/**/*.hex
+            build/**/*.zip
+            build/**/*.out
           if-no-files-found: warn
