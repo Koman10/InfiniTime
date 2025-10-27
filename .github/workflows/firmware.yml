@@ -9,7 +9,7 @@ on:
       - "README.md"
 
 jobs:
-  build-firmware:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,48 +18,51 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain & deps
+      - name: Mark repo as safe (Git warnings fix)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ninja-build cmake python3 git \
-            gcc-arm-none-eabi binutils-arm-none-eabi
+          git config --global --add safe.directory "${{ github.workspace }}"
 
       - name: Show tree (debug)
         run: |
           git submodule status || true
           ls -la
-          ls -la scripts || true
-          cmake --version
-          arm-none-eabi-gcc --version
-          ninja --version
 
-      - name: Build (prefer InfiniTime script)
-        shell: bash
+      - name: Build with our Docker image
         run: |
-          set -eux
-          if [ -f scripts/build.sh ]; then
-            chmod +x scripts/build.sh || true
-            ./scripts/build.sh -t pinetime -r
-          else
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-            cmake --build build -j"$(nproc)"
-          fi
+          docker run --rm -v "${{ github.workspace }}:/src" ghcr.io/koman10/guardian-beacon:latest bash -lc '
+            set -eux
+            cd /src
+            echo "== Building firmware inside container =="
 
-      - name: List build outputs
-        run: |
-          echo "== build dir =="
-          ls -lh build || true
-          echo "== bin/hex/zip =="
-          ls -lh build/**/*.bin build/**/*.hex build/**/*.zip 2>/dev/null || true
+            # Ścieżki toolchain/SDK dostępne w obrazie:
+            export ARM_NONE_EABI_TOOLCHAIN_PATH=/opt/gcc-arm-none-eabi-10.3-2021.10
+            export NRF5_SDK_PATH=/opt/nRF5_SDK_15.3.0_59ac345
+
+            if [ -f scripts/build.sh ]; then
+              # Standardowy build InfiniTime (jeśli skrypt istnieje)
+              ./scripts/build.sh -t pinetime -r
+            else
+              # Fallback: klasyczne CMake/Ninja
+              cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DARM_NONE_EABI_TOOLCHAIN_PATH="${ARM_NONE_EABI_TOOLCHAIN_PATH}" \
+                -DNRF5_SDK_PATH="${NRF5_SDK_PATH}" \
+                -DBUILD_DFU=1 -DBUILD_RESOURCES=1
+              cmake --build build -j"$(nproc)"
+            fi
+
+            echo "== Build complete =="
+            ls -lh build || true
+            ls -lh build/*.bin build/*.hex build/*.zip 2>/dev/null || true
+          '
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
           name: guardian-firmware
           path: |
-            build/**/*.bin
-            build/**/*.hex
-            build/**/*.zip
-            build/**/*.out
+            build/*.bin
+            build/*.hex
+            build/*.zip
+            build/*.out
           if-no-files-found: warn
