@@ -29,7 +29,7 @@ jobs:
       - name: Mark repo as safe
         run: git config --global --add safe.directory "${{ github.workspace }}"
 
-      - name: Install build tools (incl. newlib headers)
+      - name: Install build tools + ARM newlib
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -40,6 +40,16 @@ jobs:
           sudo npm install -g lv_font_conv
           arm-none-eabi-gcc --version
 
+      - name: Ensure newlib headers are visible at /usr/arm-none-eabi/include
+        run: |
+          if [ -d /usr/lib/arm-none-eabi/include ] && [ ! -d /usr/arm-none-eabi/include ]; then
+            sudo mkdir -p /usr/arm-none-eabi
+            sudo ln -s /usr/lib/arm-none-eabi/include /usr/arm-none-eabi/include
+          fi
+          echo "Check includes:"
+          ls -la /usr/arm-none-eabi/include | head || true
+          ls -la /usr/lib/arm-none-eabi/include | head || true
+
       - name: Download nRF5 SDK 15.3.0
         run: |
           mkdir -p "$SDK_DIR"
@@ -47,43 +57,18 @@ jobs:
           unzip -q /tmp/nrf5sdk.zip -d "$SDK_DIR"
           ls -la "$SDK_DIR"
 
-      - name: Detect ARM-GCC sysroot/include
-        id: detect
-        shell: bash
-        run: |
-          # Może być pusty w Debian/Ubuntu dla bare-metal
-          SYSROOT="$(arm-none-eabi-gcc -print-sysroot || true)"
-          if [ -z "$SYSROOT" ]; then
-            # typowe lokalizacje na runnerach
-            for CAND in /usr/arm-none-eabi /usr/lib/arm-none-eabi; do
-              if [ -d "$CAND" ]; then SYSROOT="$CAND"; break; fi
-            done
-          fi
-          GCCINC="$(arm-none-eabi-gcc -print-file-name=include)"
-          echo "SYSROOT=$SYSROOT" | tee -a $GITHUB_OUTPUT
-          echo "GCCINC=$GCCINC"   | tee -a $GITHUB_OUTPUT
-
-          # Sprawdź nagłówki w którejś z lokalizacji newlib
-          OK=0
-          for H in "$SYSROOT/include/string.h" "/usr/arm-none-eabi/include/string.h" "/usr/lib/arm-none-eabi/include/string.h"; do
-            if [ -f "$H" ]; then echo "Found: $H"; OK=1; break; fi
-          done
-          if [ $OK -eq 0 ]; then
-            echo "FATAL: string.h not found in expected newlib include paths"
-            exit 1
-          fi
-
       - name: Configure (CMake)
         run: |
+          # Dajemy oba katalogi include wprost, żeby uniknąć niespodzianek
+          EXTRA_INC="-isystem /usr/arm-none-eabi/include -isystem /usr/lib/arm-none-eabi/include"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DNRF5_SDK_PATH="${SDK_DIR}/nRF5_SDK_15.3.0_59ac345" \
             -DARM_NONE_EABI_TOOLCHAIN_PATH="${TOOLCHAIN_DIR}" \
             -DCMAKE_C_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-gcc" \
             -DCMAKE_CXX_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-g++" \
-            -DCMAKE_SYSROOT="${{ steps.detect.outputs.SYSROOT }}" \
-            -DCMAKE_C_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }} -isystem /usr/arm-none-eabi/include -isystem /usr/lib/arm-none-eabi/include" \
-            -DCMAKE_CXX_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }} -isystem /usr/arm-none-eabi/include -isystem /usr/lib/arm-none-eabi/include" \
+            -DCMAKE_C_FLAGS="${EXTRA_INC}" \
+            -DCMAKE_CXX_FLAGS="${EXTRA_INC}" \
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DBUILD_DFU=1 -DBUILD_RESOURCES=1
 
