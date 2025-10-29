@@ -1,52 +1,45 @@
-# check if already run. Changing the compiler var can cause reconfigure so don't want to do it again
-if(DEFINED ARM_GCC_TOOLCHAIN)
-    return()
-endif()
-set(ARM_GCC_TOOLCHAIN TRUE)
+# cmake-nRF5x/arm-gcc-toolchain.cmake
+# Minimal, robust toolchain for ARM GCC (arm-none-eabi)
 
+# Tell CMake we're cross-compiling for a bare-metal target.
 set(CMAKE_SYSTEM_NAME Generic)
-set(CMAKE_SYSTEM_PROCESSOR ARM)
+set(CMAKE_SYSTEM_PROCESSOR arm)
 
-set(TOOLCHAIN_PREFIX arm-none-eabi-)
-
-if (NOT DEFINED ARM_NONE_EABI_TOOLCHAIN_BIN_PATH)
-    if(MINGW OR CYGWIN OR WIN32)
-        set(UTIL_SEARCH_CMD where)
-    elseif(UNIX OR APPLE)
-        set(UTIL_SEARCH_CMD which)
-    endif()
-    execute_process(
-            COMMAND ${UTIL_SEARCH_CMD} ${TOOLCHAIN_PREFIX}gcc
-            OUTPUT_VARIABLE BINUTILS_PATH
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-
-    get_filename_component(ARM_NONE_EABI_TOOLCHAIN_BIN_PATH ${BINUTILS_PATH} DIRECTORY)
-endif ()
-
-# Without that flag CMake is not able to pass test compilation check
-if (${CMAKE_VERSION} VERSION_EQUAL "3.6.0" OR ${CMAKE_VERSION} VERSION_GREATER "3.6")
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-else()
-    set(CMAKE_EXE_LINKER_FLAGS_INIT "--specs=nosys.specs")
+# If user provides ARM_NONE_EABI_TOOLCHAIN_PATH, use it; otherwise default to /usr
+if(NOT DEFINED ARM_NONE_EABI_TOOLCHAIN_PATH)
+  set(ARM_NONE_EABI_TOOLCHAIN_PATH "/usr")
 endif()
 
-set(TOOLCHAIN_PATH_AND_PREFIX ${ARM_NONE_EABI_TOOLCHAIN_BIN_PATH}/${TOOLCHAIN_PREFIX})
+# Compilers
+set(CMAKE_C_COMPILER   "${ARM_NONE_EABI_TOOLCHAIN_PATH}/bin/arm-none-eabi-gcc")
+set(CMAKE_CXX_COMPILER "${ARM_NONE_EABI_TOOLCHAIN_PATH}/bin/arm-none-eabi-g++")
+set(CMAKE_ASM_COMPILER "${ARM_NONE_EABI_TOOLCHAIN_PATH}/bin/arm-none-eabi-gcc")
 
-set(CMAKE_C_COMPILER ${TOOLCHAIN_PATH_AND_PREFIX}gcc)
+# Detect real sysroot and gcc include folder from the compiler itself
+execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-sysroot
+                OUTPUT_VARIABLE _GCC_SYSROOT
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-file-name=include
+                OUTPUT_VARIABLE _GCC_INCLUDE
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-set(CMAKE_ASM_COMPILER ${CMAKE_C_COMPILER})
+# Export for parent CMakeLists if needed
+set(ARM_GCC_SYSROOT "${_GCC_SYSROOT}" CACHE INTERNAL "ARM GCC sysroot")
+set(ARM_GCC_INCLUDE "${_GCC_INCLUDE}" CACHE INTERNAL "ARM GCC include")
 
-set(CMAKE_CXX_COMPILER ${TOOLCHAIN_PATH_AND_PREFIX}c++)
+# Use detected sysroot (only if not already forced by the caller)
+if(NOT CMAKE_SYSROOT)
+  set(CMAKE_SYSROOT "${ARM_GCC_SYSROOT}")
+endif()
 
-set(CMAKE_AR ${TOOLCHAIN_PATH_AND_PREFIX}ar)
-set(CMAKE_RANLIB ${TOOLCHAIN_PATH_AND_PREFIX}ranlib)
+# Make sure try_compile does not try to link executables
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-set(CMAKE_OBJCOPY ${TOOLCHAIN_PATH_AND_PREFIX}objcopy CACHE INTERNAL "objcopy tool")
-set(CMAKE_SIZE_UTIL ${TOOLCHAIN_PATH_AND_PREFIX}size CACHE INTERNAL "size tool")
+# Global flags fix: inject proper sysroot and standard header paths once
+foreach(lang C CXX ASM)
+  set(_FLAGS_VAR "CMAKE_${lang}_FLAGS")
+  set(${_FLAGS_VAR} "${${_FLAGS_VAR}} --sysroot=${CMAKE_SYSROOT} -isystem ${ARM_GCC_SYSROOT}/include -isystem ${ARM_GCC_INCLUDE}" CACHE STRING "" FORCE)
+endforeach()
 
-set(CMAKE_SYSROOT ${ARM_NONE_EABI_TOOLCHAIN_BIN_PATH})
-set(CMAKE_FIND_ROOT_PATH ${ARM_NONE_EABI_TOOLCHAIN_BIN_PATH})
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+# Convenience var used by top-level CMakeLists
+set(ARM_GCC_TOOLCHAIN "${ARM_NONE_EABI_TOOLCHAIN_PATH}" CACHE INTERNAL "Toolchain root")
