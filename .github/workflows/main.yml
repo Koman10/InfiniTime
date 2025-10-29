@@ -29,12 +29,14 @@ jobs:
       - name: Mark repo as safe
         run: git config --global --add safe.directory "${{ github.workspace }}"
 
-      - name: Install build tools
+      - name: Install build tools (incl. newlib headers)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential python3 python3-pip \
-            gcc-arm-none-eabi binutils-arm-none-eabi nodejs npm
+            gcc-arm-none-eabi binutils-arm-none-eabi \
+            libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+            nodejs npm
           sudo npm install -g lv_font_conv
           arm-none-eabi-gcc --version
 
@@ -49,12 +51,27 @@ jobs:
         id: detect
         shell: bash
         run: |
-          SYSROOT="$(arm-none-eabi-gcc -print-sysroot)"
+          # Może być pusty w Debian/Ubuntu dla bare-metal
+          SYSROOT="$(arm-none-eabi-gcc -print-sysroot || true)"
+          if [ -z "$SYSROOT" ]; then
+            # typowe lokalizacje na runnerach
+            for CAND in /usr/arm-none-eabi /usr/lib/arm-none-eabi; do
+              if [ -d "$CAND" ]; then SYSROOT="$CAND"; break; fi
+            done
+          fi
           GCCINC="$(arm-none-eabi-gcc -print-file-name=include)"
           echo "SYSROOT=$SYSROOT" | tee -a $GITHUB_OUTPUT
           echo "GCCINC=$GCCINC"   | tee -a $GITHUB_OUTPUT
-          test -f "$SYSROOT/include/string.h" || { echo "FATAL: $SYSROOT/include/string.h not found"; exit 1; }
-          test -f "$GCCINC/stddef.h" || { echo "FATAL: $GCCINC/stddef.h not found"; exit 1; }
+
+          # Sprawdź nagłówki w którejś z lokalizacji newlib
+          OK=0
+          for H in "$SYSROOT/include/string.h" "/usr/arm-none-eabi/include/string.h" "/usr/lib/arm-none-eabi/include/string.h"; do
+            if [ -f "$H" ]; then echo "Found: $H"; OK=1; break; fi
+          done
+          if [ $OK -eq 0 ]; then
+            echo "FATAL: string.h not found in expected newlib include paths"
+            exit 1
+          fi
 
       - name: Configure (CMake)
         run: |
@@ -65,8 +82,8 @@ jobs:
             -DCMAKE_C_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-gcc" \
             -DCMAKE_CXX_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-g++" \
             -DCMAKE_SYSROOT="${{ steps.detect.outputs.SYSROOT }}" \
-            -DCMAKE_C_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }}" \
-            -DCMAKE_CXX_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }}" \
+            -DCMAKE_C_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }} -isystem /usr/arm-none-eabi/include -isystem /usr/lib/arm-none-eabi/include" \
+            -DCMAKE_CXX_FLAGS="--sysroot=${{ steps.detect.outputs.SYSROOT }} -isystem ${{ steps.detect.outputs.SYSROOT }}/include -isystem ${{ steps.detect.outputs.GCCINC }} -isystem /usr/arm-none-eabi/include -isystem /usr/lib/arm-none-eabi/include" \
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DBUILD_DFU=1 -DBUILD_RESOURCES=1
 
