@@ -19,6 +19,7 @@ jobs:
       SDK_ZIP_URL: https://developer.nordicsemi.com/nRF5_SDK/nRF5_SDK_v15.x.x/nRF5_SDK_15.3.0_59ac345.zip
       SDK_DIR: ${{ github.workspace }}/_nrf5sdk
       TOOLCHAIN_DIR: /usr
+      SYSROOT_DIR: /usr/arm-none-eabi
 
     steps:
       - name: Checkout (with submodules)
@@ -35,9 +36,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential python3 python3-pip \
             gcc-arm-none-eabi binutils-arm-none-eabi nodejs npm
-          # 🔹 instalujemy lv_font_conv do generowania czcionek
+          # czcionki LVGL
           sudo npm install -g lv_font_conv
-          lv_font_conv --version || echo "lv_font_conv zainstalowany"
+          arm-none-eabi-gcc --version
+          echo "SYSROOT expected at: $SYSROOT_DIR"
+          test -f "$SYSROOT_DIR/include/string.h" && echo "OK: string.h found" || (echo "ERR: string.h missing in $SYSROOT_DIR" && exit 1)
 
       - name: Download nRF5 SDK 15.3.0
         run: |
@@ -50,9 +53,13 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DARM_NONE_EABI_TOOLCHAIN_PATH="${TOOLCHAIN_DIR}" \
             -DNRF5_SDK_PATH="${SDK_DIR}/nRF5_SDK_15.3.0_59ac345" \
-            -DBUILD_DFU=1 -DBUILD_RESOURCES=1
+            -DARM_NONE_EABI_TOOLCHAIN_PATH="${TOOLCHAIN_DIR}" \
+            -DCMAKE_SYSROOT="${SYSROOT_DIR}" \
+            -DCMAKE_C_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-gcc" \
+            -DCMAKE_CXX_COMPILER="${TOOLCHAIN_DIR}/bin/arm-none-eabi-g++" \
+            -DBUILD_DFU=1 \
+            -DBUILD_RESOURCES=1
 
       - name: Build
         run: cmake --build build -j"$(nproc)"
